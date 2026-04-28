@@ -1,0 +1,67 @@
+name: update blog post
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: update-blog-post
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          repository: pintordev/pintordev
+
+      - name: Update blog posts in README
+        run: |
+          python3 << 'EOF'
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          import re
+
+          feed_url = "https://blog.pintor.dev/feed"
+          req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
+          with urllib.request.urlopen(req) as res:
+              root = ET.parse(res).getroot()
+
+          ns_atom = "http://www.w3.org/2005/Atom"
+          ns_rss = ""
+
+          # Atom feed
+          entries = root.findall(f"{{{ns_atom}}}entry")
+          if entries:
+              entry = entries[0]
+              title = entry.findtext(f"{{{ns_atom}}}title", "").strip()
+              url = entry.find(f"{{{ns_atom}}}link").get("href", "").strip()
+          else:
+              # RSS feed
+              item = root.find(".//item")
+              title = item.findtext("title", "").strip()
+              url = item.findtext("link", "").strip()
+
+          post_line = f"[{title}]({url})"
+
+          with open("README.md", "r") as f:
+              content = f.read()
+
+          pattern = r"(<!-- BLOG-POST-LIST:START -->).*?(<!-- BLOG-POST-LIST:END -->)"
+          replacement = rf"\1\n{post_line}\n\2"
+          new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+
+          with open("README.md", "w") as f:
+              f.write(new_content)
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --staged --quiet || git commit -m "Updated with the latest blog posts"
+          git push
